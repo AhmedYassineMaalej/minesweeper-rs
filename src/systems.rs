@@ -1,12 +1,11 @@
 use bevy::core_pipeline::bloom::Bloom;
 use bevy::core_pipeline::tonemapping::Tonemapping;
-use bevy::{
-    prelude::*,
-    window::PrimaryWindow,
-};
+use bevy::{prelude::*, window::PrimaryWindow};
 
-use crate::events::{DisplayNumberEvent, FlipTileEvent, GameStartEvent, HoverTileEvent};
-use crate::resources::{Coordinates, GameState, HoveredTile, Tile, TileMap, TileMaterialHandles};
+use crate::components::Hover;
+use crate::events::{DisplayNumberEvent, FlipTileEvent, GameStartEvent, ToggleMarkEvent};
+use crate::resources::{Coordinates, GameState, MeshHandles, TileMap, TileMaterialHandles};
+use crate::{COLS, FONT_SIZE, ROWS, TILE_SIZE};
 
 #[derive(Resource, Debug)]
 pub struct FontHandle(Handle<Font>);
@@ -14,6 +13,11 @@ pub struct FontHandle(Handle<Font>);
 pub fn setup_materials(mut commands: Commands, materials: ResMut<Assets<ColorMaterial>>) {
     let tile_material_handles = TileMaterialHandles::new(materials);
     commands.insert_resource(tile_material_handles);
+}
+
+pub fn setup_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+    let tile_mesh = meshes.add(Rectangle::new(TILE_SIZE, TILE_SIZE));
+    commands.insert_resource(MeshHandles { tile_mesh });
 }
 
 pub fn load_font(mut commands: Commands, asset_server: ResMut<AssetServer>) {
@@ -30,85 +34,67 @@ pub fn setup_camera(mut commands: Commands) {
         },
         Tonemapping::TonyMcMapface,
         Bloom::default(),
-    ));}
+    ));
+}
 
 pub fn setup_tilemap(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
+    meshes: Res<MeshHandles>,
     material_handles: Res<TileMaterialHandles>,
 ) {
-    let tile_mesh = meshes.add(Rectangle::new(40.0, 40.0));
+    let tilemap = TileMap::new(&mut commands, COLS, ROWS);
 
-    let width = 20;
-    let height = 20;
-
-    let mut tiles = Vec::new();
-
-    for row in 0..height {
-        let mut tile_row = Vec::new();
-        for col in 0..width {
+    for row in 0..ROWS {
+        for col in 0..COLS {
             let coordinates = Coordinates { col, row };
-            let (x, y) = coordinates.get_screen_position();
+            let tile = &tilemap[coordinates];
+            let id = tile.id();
 
-            let material = material_handles.get_tile_material(&coordinates);
+            let mut entity = commands.get_entity(id).unwrap();
 
-            let id = commands
-                .spawn((
-                    Mesh2d(tile_mesh.clone()),
-                    MeshMaterial2d(material),
-                    Transform::from_xyz(x, y, 0.0),
-                ))
-                .id();
+            let material = material_handles.get_material(tile);
+            let transform = coordinates.get_transform(0.0);
 
-            let tile = Tile {
-                id,
-                contains_mine: false,
-                flipped: false,
-                number: None,
-            };
-
-            tile_row.push(tile);
+            entity.insert((
+                Mesh2d(meshes.tile_mesh.clone()),
+                MeshMaterial2d(material),
+                transform,
+            ));
         }
-        tiles.push(tile_row);
     }
 
-    commands.insert_resource(TileMap {
-        width,
-        height,
-        tiles,
-    });
+    commands.insert_resource(tilemap);
 }
 
-pub fn handle_flip_tile(
+pub fn handle_click_tile(
     mut query: Query<&mut MeshMaterial2d<ColorMaterial>>,
-    mut flip_event_reader: EventReader<FlipTileEvent>,
+    mut click_event_reader: EventReader<FlipTileEvent>,
     mut display_number_events: EventWriter<DisplayNumberEvent>,
     mut tilemap: ResMut<TileMap>,
     material_handles: Res<TileMaterialHandles>,
 ) {
-    let mut to_flip: Vec<Coordinates> = flip_event_reader
+    let mut to_flip: Vec<Coordinates> = click_event_reader
         .read()
         .map(|event| event.coordinates)
         .collect();
 
     while let Some(coordinates) = to_flip.pop() {
-        if tilemap[coordinates].flipped {
+        let tile = &mut tilemap[coordinates];
+
+        if !tile.flip() {
             continue;
         }
 
-        tilemap[coordinates].flipped = true;
+        let mut material_handle = material_handles.get_material(tile);
 
-        let mut material = material_handles.get_flipped_tile_material(&coordinates);
-
-        if tilemap[coordinates].contains_mine {
-            material = material_handles.red_mine.clone();
+        if tile.contains_mine() {
+            material_handle = material_handles.mine.clone();
         }
 
-        let tile_id = tilemap[coordinates].id;
-        let mut handle = query.get_mut(tile_id).unwrap();
-        handle.0 = material;
+        let mut mesh = query.get_mut(tile.id()).unwrap();
+        mesh.0 = material_handle;
 
-        match tilemap[coordinates].number {
+        match tile.number() {
             Some(number) => {
                 display_number_events.send(DisplayNumberEvent {
                     number,
@@ -133,18 +119,18 @@ pub fn handle_display_number(
             coordinates,
         } = event;
 
-        let textstyle = TextFont {
+        let textfont = TextFont {
             font: font.0.clone(),
-            font_size: 40.0,
+            font_size: FONT_SIZE,
             ..default()
         };
 
-        let (x, y) = coordinates.get_screen_position();
+        let transform = coordinates.get_transform(1.0);
         commands.spawn((
             Text2d(number.to_string()),
-            textstyle,
+            textfont,
             TextColor(event.get_color()),
-            Transform::from_xyz(x, y, 1.0),
+            transform,
         ));
     }
 }
@@ -152,24 +138,29 @@ pub fn handle_display_number(
 pub fn handle_click(
     q_windows: Query<&Window, With<PrimaryWindow>>,
     mut flip_events: EventWriter<FlipTileEvent>,
+    mut mark_events: EventWriter<ToggleMarkEvent>,
     mut game_start_events: EventWriter<GameStartEvent>,
     gamestate: Res<GameState>,
     buttons: Res<ButtonInput<MouseButton>>,
 ) {
+    let Some(mouse_pos) = q_windows.single().cursor_position() else {
+        return;
+    };
+
+    let coordinates = Coordinates::from_screen_position(mouse_pos);
+
     if buttons.just_pressed(MouseButton::Left) {
-        if let Some(position) = q_windows.single().cursor_position() {
-            let col = (position.x / 40.0) as i64;
-            let row = (position.y / 40.0) as i64;
-            let coordinates = Coordinates { col, row };
-
-            if *gamestate == GameState::Pending {
-                game_start_events.send(GameStartEvent {
-                    mouse_coords: coordinates,
-                });
-            }
-
-            flip_events.send(FlipTileEvent { coordinates });
+        if *gamestate == GameState::Pending {
+            game_start_events.send(GameStartEvent {
+                mouse_coords: coordinates,
+            });
         }
+
+        flip_events.send(FlipTileEvent { coordinates });
+    }
+
+    if buttons.just_pressed(MouseButton::Right) {
+        mark_events.send(ToggleMarkEvent { coordinates });
     }
 }
 
@@ -182,76 +173,74 @@ pub fn handle_game_start(
     let Some(GameStartEvent { mouse_coords }) = game_start_events.read().next() else {
         return;
     };
-        *gamestate = GameState::Ongoing;
+    *gamestate = GameState::Ongoing;
 
-        tilemap.generate_mines(mouse_coords);
-    
+    tilemap.generate_mines(mouse_coords);
+
     bloom.intensity = 0.1;
     bloom.low_frequency_boost = 0.35;
 }
 
 pub fn handle_mouse_movement(
-    mut hover_events: EventWriter<HoverTileEvent>,
-    hovered_tile: Res<HoveredTile>,
-    tilemap: Res<TileMap>,
     q_windows: Query<&Window, With<PrimaryWindow>>,
-) {
-    match q_windows.single().cursor_position() {
-        Some(position) => {
-            let coordinates =
-                Coordinates::new((position.x / 40.0) as i64, (position.y / 40.0) as i64);
-
-            if tilemap[coordinates].flipped {
-                hover_events.send(HoverTileEvent { coordinates: None });
-                return;
-            }
-
-            if hovered_tile.coordinates == Some(coordinates) {
-                // no need to update
-                return;
-            }
-
-            hover_events.send(HoverTileEvent {
-                coordinates: Some(coordinates),
-            })
-        }
-        None => hover_events.send(HoverTileEvent { coordinates: None }),
-    };
-}
-
-pub fn handle_hover_tile(
-    mut hover_events: EventReader<HoverTileEvent>,
+    mut query_hover: Query<(&mut Transform, &mut Visibility), With<Hover>>,
     tilemap: Res<TileMap>,
-    mut hovered_tile: ResMut<HoveredTile>,
-    material_handles: Res<TileMaterialHandles>,
-    mut query: Query<&mut MeshMaterial2d<ColorMaterial>>,
 ) {
-    let Some(hover_event) = hover_events.read().last() else {
-        return;
-    };
+    let (mut transform, mut visibility) = query_hover.single_mut();
+    let cursor_pos = q_windows.single().cursor_position();
 
-    // restore old tile color if it's not flipped
-    if let Some(old_coordinates) = hovered_tile.coordinates {
-        if !tilemap[old_coordinates].flipped {
-            let tile_id = tilemap[old_coordinates].id;
-            let mut handle = query.get_mut(tile_id).unwrap();
-            handle.0 = material_handles.get_tile_material(&old_coordinates);
-        }
-    }
-
-    hovered_tile.coordinates = hover_event.coordinates;
-
-    let Some(coordinates) = hover_event.coordinates else {
-        return;
-    };
-
-    if tilemap[coordinates].flipped {
+    // check if cursor is outside window
+    if cursor_pos.is_none() {
+        *visibility = Visibility::Hidden;
         return;
     }
 
-    // color new hover tile
-    let tile_id = tilemap[coordinates].id;
-    let mut handle = query.get_mut(tile_id).unwrap();
-    handle.0 = material_handles.hover.clone();
+    let cursor_pos = cursor_pos.unwrap();
+    let cursor_coordinates = Coordinates::new(
+        (cursor_pos.x / TILE_SIZE) as i64,
+        (cursor_pos.y / TILE_SIZE) as i64,
+    );
+
+    if !tilemap[cursor_coordinates].is_hoverable() {
+        *visibility = Visibility::Hidden;
+        return;
+    }
+
+    *transform = cursor_coordinates.get_transform(1.0);
+    *visibility = Visibility::Visible;
 }
 
+pub fn spawn_hover_tile(
+    mut commands: Commands,
+    mesh_handles: Res<MeshHandles>,
+    material_handles: Res<TileMaterialHandles>,
+) {
+    let tile_mesh = mesh_handles.tile_mesh.clone();
+    let transform = Coordinates::new(0, 0).get_transform(1.0);
+
+    commands.spawn((
+        Hover,
+        Mesh2d(tile_mesh),
+        MeshMaterial2d(material_handles.hover.clone()),
+        transform,
+        Visibility::Hidden,
+    ));
+}
+
+pub fn handle_toggle_mark(
+    mut mark_events: EventReader<ToggleMarkEvent>,
+    mut tilemap: ResMut<TileMap>,
+    mut query: Query<&mut MeshMaterial2d<ColorMaterial>>,
+    material_handles: Res<TileMaterialHandles>,
+) {
+    for event in mark_events.read() {
+        let coordinates = event.coordinates;
+        let tile = &mut tilemap[coordinates];
+
+        if !tile.toggle_mark() {
+            continue;
+        }
+
+        query.get_mut(tile.id()).unwrap().0 = material_handles.get_material(tile);
+    }
+}

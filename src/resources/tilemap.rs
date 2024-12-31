@@ -3,8 +3,9 @@ use rand::{thread_rng, Rng};
 use std::ops::{Index, IndexMut};
 
 use crate::resources::Coordinates;
+use crate::MINE_COUNT;
 
-use super::Tile;
+use super::{Shade, Tile};
 
 #[derive(Debug, Resource)]
 pub struct TileMap {
@@ -32,10 +33,29 @@ impl IndexMut<Coordinates> for TileMap {
     }
 }
 
-
 impl TileMap {
+    pub fn new(commands: &mut Commands, width: i64, height: i64) -> Self {
+        let mut tiles = Vec::new();
+        for row in 0..height {
+            let mut tile_row = Vec::new();
+            for col in 0..width {
+                let shade = Shade::from_coordinates(row, col);
+                let tile = Tile::new(commands, shade);
+                tile_row.push(tile);
+            }
+
+            tiles.push(tile_row);
+        }
+
+        Self {
+            width,
+            height,
+            tiles,
+        }
+    }
+
     pub fn generate_mines(&mut self, mouse_coords: &Coordinates) {
-        let mine_count = 40;
+        let mine_count = MINE_COUNT;
 
         let mut mines = 0;
 
@@ -45,16 +65,15 @@ impl TileMap {
                 thread_rng().gen_range(0..self.height),
             );
 
-            if mine_coords.manhattan_distance(mouse_coords) <= 4 {
+            if mine_coords.manhattan_distance(mouse_coords) <= 3 {
                 continue;
             }
 
-            if self[mine_coords].contains_mine {
-                continue;
-            }
+            let tile = &mut self[mine_coords];
 
-            self[mine_coords].contains_mine = true;
-            mines += 1;
+            if tile.set_mine() {
+                mines += 1;
+            }
         }
 
         self.calculate_tile_numbers();
@@ -67,12 +86,10 @@ impl TileMap {
                 let mine_count = self
                     .get_neighbors(&coordinates)
                     .into_iter()
-                    .filter(|&neighbor| self[neighbor].contains_mine)
+                    .filter(|&neighbor| self[neighbor].contains_mine())
                     .count();
 
-                if mine_count != 0 {
-                    self[coordinates].number = Some(mine_count);
-                }
+                self[coordinates].set_number(mine_count);
             }
         }
     }
