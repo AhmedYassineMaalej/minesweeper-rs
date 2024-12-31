@@ -5,7 +5,7 @@ mod plugins;
 pub mod resources;
 pub mod systems;
 
-use events::{DisplayNumberEvent, FlipTileEvent, GameStartEvent, ToggleMarkEvent};
+use events::{DisplayNumberEvent, FlipTileEvent, GameStartEvent, RevealNeighborsEvent, ToggleMarkEvent};
 use plugins::MinesweeperPlugins;
 use resources::GameState;
 use systems::*;
@@ -29,6 +29,7 @@ fn main() {
         .add_event::<ToggleMarkEvent>()
         .add_event::<GameStartEvent>()
         .add_event::<DisplayNumberEvent>()
+        .add_event::<RevealNeighborsEvent>()
         .init_resource::<GameState>()
         .add_systems(
             Startup,
@@ -49,7 +50,8 @@ fn main() {
                 (
                     handle_click,
                     handle_game_start,
-                    handle_click_tile,
+                    handle_auto_reveal,
+                    handle_flip_tile,
                     handle_toggle_mark,
                     handle_display_number,
                 )

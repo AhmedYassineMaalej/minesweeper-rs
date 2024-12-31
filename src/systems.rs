@@ -3,7 +3,9 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::{prelude::*, window::PrimaryWindow};
 
 use crate::components::Hover;
-use crate::events::{DisplayNumberEvent, FlipTileEvent, GameStartEvent, ToggleMarkEvent};
+use crate::events::{
+    DisplayNumberEvent, FlipTileEvent, GameStartEvent, RevealNeighborsEvent, ToggleMarkEvent,
+};
 use crate::resources::{Coordinates, GameState, MeshHandles, TileMap, TileMaterialHandles};
 use crate::{COLS, FONT_SIZE, ROWS, TILE_SIZE};
 
@@ -66,14 +68,14 @@ pub fn setup_tilemap(
     commands.insert_resource(tilemap);
 }
 
-pub fn handle_click_tile(
+pub fn handle_flip_tile(
     mut query: Query<&mut MeshMaterial2d<ColorMaterial>>,
-    mut click_event_reader: EventReader<FlipTileEvent>,
+    mut flip_event_reader: EventReader<FlipTileEvent>,
     mut display_number_events: EventWriter<DisplayNumberEvent>,
     mut tilemap: ResMut<TileMap>,
     material_handles: Res<TileMaterialHandles>,
 ) {
-    let mut to_flip: Vec<Coordinates> = click_event_reader
+    let mut to_flip: Vec<Coordinates> = flip_event_reader
         .read()
         .map(|event| event.coordinates)
         .collect();
@@ -136,6 +138,7 @@ pub fn handle_click(
     mut flip_events: EventWriter<FlipTileEvent>,
     mut mark_events: EventWriter<ToggleMarkEvent>,
     mut game_start_events: EventWriter<GameStartEvent>,
+    mut auto_reveal_events: EventWriter<RevealNeighborsEvent>,
     gamestate: Res<GameState>,
     buttons: Res<ButtonInput<MouseButton>>,
 ) {
@@ -155,6 +158,10 @@ pub fn handle_click(
 
     if buttons.just_pressed(MouseButton::Right) {
         mark_events.send(ToggleMarkEvent { coordinates });
+    }
+
+    if buttons.just_pressed(MouseButton::Middle) {
+        auto_reveal_events.send(RevealNeighborsEvent { coordinates });
     }
 }
 
@@ -237,5 +244,30 @@ pub fn handle_toggle_mark(
         }
 
         query.get_mut(tile.id()).unwrap().0 = material_handles.get_material(tile);
+    }
+}
+
+pub fn handle_auto_reveal(
+    mut reveal_neighbors_events: EventReader<RevealNeighborsEvent>,
+    mut flip_events: EventWriter<FlipTileEvent>,
+    tilemap: Res<TileMap>,
+) {
+    for event in reveal_neighbors_events.read() {
+        let coordinates = event.coordinates;
+        let tile = &tilemap[coordinates];
+        let neighbours = tilemap.get_neighbors(&coordinates);
+
+        let mark_count = neighbours
+            .iter()
+            .filter(|&neighbour| tilemap[*neighbour].is_marked())
+            .count();
+
+        if tile.number() != Some(mark_count) {
+            continue;
+        }
+
+        for neighbor in tilemap.get_neighbors(&coordinates) {
+            flip_events.send(FlipTileEvent::new(neighbor));
+        }
     }
 }

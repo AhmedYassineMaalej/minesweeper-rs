@@ -6,3 +6,9 @@ use crate::resources::Coordinates;
 pub struct FlipTileEvent {
     pub coordinates: Coordinates,
 }
+
+impl FlipTileEvent {
+    pub fn new(coordinates: Coordinates) -> Self {
+        Self { coordinates }
+    }
+}

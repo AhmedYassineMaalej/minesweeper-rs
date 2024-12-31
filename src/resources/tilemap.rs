@@ -54,7 +54,7 @@ impl TileMap {
         }
     }
 
-    pub fn generate_mines(&mut self, mouse_coords: &Coordinates) {
+    pub fn generate_mines(&mut self, mouse_coordinates: &Coordinates) {
         let mine_count = MINE_COUNT;
 
         let mut mines = 0;
@@ -65,7 +65,7 @@ impl TileMap {
                 thread_rng().gen_range(0..self.height),
             );
 
-            if mine_coords.manhattan_distance(mouse_coords) <= 3 {
+            if mine_coords.manhattan_distance(mouse_coordinates) <= 3 {
                 continue;
             }
 
@@ -76,10 +76,10 @@ impl TileMap {
             }
         }
 
-        self.calculate_tile_numbers();
+        self.update_tile_numbers();
     }
 
-    fn calculate_tile_numbers(&mut self) {
+    fn update_tile_numbers(&mut self) {
         for row in 0..self.height {
             for col in 0..self.width {
                 let coordinates = Coordinates::new(col, row);
@@ -119,5 +119,18 @@ impl TileMap {
         }
 
         neighbors
+    }
+
+    pub fn can_reveal_neighbors(&self, coordinates: Coordinates) -> bool {
+        let tile = &self[coordinates];
+
+        let mut mark_count = 0;
+        for neighbour in self.get_neighbors(&coordinates) {
+            if self[neighbour].is_marked() {
+                mark_count += 1;
+            }
+        }
+
+        tile.number() == Some(mark_count)
     }
 }
