@@ -35,6 +35,10 @@ impl TileMaterialHandles {
     }
 
     pub fn get_material(&self, tile: &Tile) -> Handle<ColorMaterial> {
+        if tile.contains_mine() && tile.is_flipped() {
+            return self.mine.clone();
+        }
+
         if tile.is_marked() {
             return self.mark.clone();
         }

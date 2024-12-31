@@ -46,7 +46,7 @@ pub fn setup_tilemap(
 
     for row in 0..ROWS {
         for col in 0..COLS {
-            let coordinates = Coordinates { col, row };
+            let coordinates = Coordinates::new(col, row);
             let tile = &tilemap[coordinates];
             let id = tile.id();
 
@@ -85,11 +85,7 @@ pub fn handle_click_tile(
             continue;
         }
 
-        let mut material_handle = material_handles.get_material(tile);
-
-        if tile.contains_mine() {
-            material_handle = material_handles.mine.clone();
-        }
+        let material_handle = material_handles.get_material(tile);
 
         let mut mesh = query.get_mut(tile.id()).unwrap();
         mesh.0 = material_handle;
@@ -151,9 +147,7 @@ pub fn handle_click(
 
     if buttons.just_pressed(MouseButton::Left) {
         if *gamestate == GameState::Pending {
-            game_start_events.send(GameStartEvent {
-                mouse_coords: coordinates,
-            });
+            game_start_events.send(GameStartEvent::new(coordinates));
         }
 
         flip_events.send(FlipTileEvent { coordinates });
@@ -170,12 +164,13 @@ pub fn handle_game_start(
     mut gamestate: ResMut<GameState>,
     mut tilemap: ResMut<TileMap>,
 ) {
-    let Some(GameStartEvent { mouse_coords }) = game_start_events.read().next() else {
+    let Some(event) = game_start_events.read().next() else {
         return;
     };
     *gamestate = GameState::Ongoing;
 
-    tilemap.generate_mines(mouse_coords);
+    let mouse_coordinates = event.mouse_coordinates();
+    tilemap.generate_mines(&mouse_coordinates);
 
     bloom.intensity = 0.1;
     bloom.low_frequency_boost = 0.35;
