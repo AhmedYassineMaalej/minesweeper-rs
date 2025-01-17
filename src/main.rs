@@ -5,7 +5,7 @@ mod plugins;
 pub mod resources;
 pub mod systems;
 
-use events::{DisplayNumberEvent, FlipTileEvent, GameStartEvent, RevealNeighborsEvent, ToggleMarkEvent};
+use events::*;
 use plugins::MinesweeperPlugins;
 use resources::GameState;
 use systems::*;
@@ -18,9 +18,11 @@ pub const TILE_SIZE: f32 = 40.0;
 pub const WINDOW_WIDTH: f32 = TILE_SIZE * COLS as f32;
 pub const WINDOW_HEIGHT: f32 = TILE_SIZE * ROWS as f32;
 
-pub const MINE_COUNT: u64 = 50;
+pub const MINE_COUNT: u64 = 40;
 
 pub const FONT_SIZE: f32 = 35.0;
+pub const FONT_PATH: &str =
+    r"C:\Users\MSI\Desktop\Code\Rust\minesweeper-rs\assets\FiraCode-Medium.ttf";
 
 fn main() {
     App::new()
@@ -30,6 +32,7 @@ fn main() {
         .add_event::<GameStartEvent>()
         .add_event::<DisplayNumberEvent>()
         .add_event::<RevealNeighborsEvent>()
+        .add_event::<SpawnEffectsEvent>()
         .init_resource::<GameState>()
         .add_systems(
             Startup,
@@ -56,6 +59,9 @@ fn main() {
                     handle_display_number,
                 )
                     .chain(),
+                handle_window_close,
+                handle_spawn_effects,
+                update_particles,
             ),
         )
         .run();

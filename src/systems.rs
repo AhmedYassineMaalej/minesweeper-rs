@@ -1,13 +1,17 @@
+use std::f32::consts::PI;
+
 use bevy::core_pipeline::bloom::Bloom;
 use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::window::WindowCloseRequested;
 use bevy::{prelude::*, window::PrimaryWindow};
 
 use crate::components::Hover;
 use crate::events::{
-    DisplayNumberEvent, FlipTileEvent, GameStartEvent, RevealNeighborsEvent, ToggleMarkEvent,
+    DisplayNumberEvent, FlipTileEvent, GameStartEvent, RevealNeighborsEvent, SpawnEffectsEvent,
+    ToggleMarkEvent,
 };
 use crate::resources::{Coordinates, GameState, MeshHandles, TileMap, TileMaterialHandles};
-use crate::{COLS, FONT_SIZE, ROWS, TILE_SIZE};
+use crate::{COLS, FONT_PATH, FONT_SIZE, ROWS, TILE_SIZE};
 
 #[derive(Resource, Debug)]
 pub struct FontHandle(Handle<Font>);
@@ -23,7 +27,7 @@ pub fn setup_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
 }
 
 pub fn load_font(mut commands: Commands, asset_server: ResMut<AssetServer>) {
-    let font = asset_server.load::<Font>("FiraCode-Medium.ttf");
+    let font = asset_server.load::<Font>(FONT_PATH);
     commands.insert_resource(FontHandle(font));
 }
 
@@ -71,6 +75,7 @@ pub fn setup_tilemap(
 pub fn handle_flip_tile(
     mut query: Query<&mut MeshMaterial2d<ColorMaterial>>,
     mut flip_event_reader: EventReader<FlipTileEvent>,
+    mut flip_effects_writer: EventWriter<SpawnEffectsEvent>,
     mut display_number_events: EventWriter<DisplayNumberEvent>,
     mut tilemap: ResMut<TileMap>,
     material_handles: Res<TileMaterialHandles>,
@@ -86,6 +91,8 @@ pub fn handle_flip_tile(
         if !tile.flip() {
             continue;
         }
+
+        flip_effects_writer.send(SpawnEffectsEvent { coordinates });
 
         let material_handle = material_handles.get_material(tile);
 
@@ -162,6 +169,15 @@ pub fn handle_click(
 
     if buttons.just_pressed(MouseButton::Middle) {
         auto_reveal_events.send(RevealNeighborsEvent { coordinates });
+    }
+}
+
+pub fn handle_window_close(
+    mut window_close_events: EventReader<WindowCloseRequested>,
+    mut exit: EventWriter<AppExit>,
+) {
+    if let Some(_event) = window_close_events.read().next() {
+        exit.send(AppExit::Success);
     }
 }
 
@@ -269,5 +285,48 @@ pub fn handle_auto_reveal(
         for neighbor in tilemap.get_neighbors(&coordinates) {
             flip_events.send(FlipTileEvent::new(neighbor));
         }
+    }
+}
+
+#[derive(Component)]
+pub struct ParticleVelocity {
+    velocity: Vec2,
+}
+
+pub fn handle_spawn_effects(
+    mut commands: Commands,
+    meshes: Res<MeshHandles>,
+    materials: Res<TileMaterialHandles>,
+    mut event_reader: EventReader<SpawnEffectsEvent>,
+) {
+    for SpawnEffectsEvent { coordinates } in event_reader.read() {
+        let mut transform = coordinates.get_transform(2.0);
+        transform.translation.x += (rand::random::<f32>() - 0.5) * TILE_SIZE;
+        transform.translation.y += (rand::random::<f32>() - 0.5) * TILE_SIZE;
+        transform.scale = Vec3::splat(rand::random::<f32>() * 0.5 + 0.2);
+
+        let angle = PI * rand::random::<f32>();
+        let velocity = ParticleVelocity {
+            velocity: Vec2::from_angle(angle) * 200.0,
+        };
+
+        commands.spawn((
+            Mesh2d(meshes.tile_mesh.clone()),
+            MeshMaterial2d(materials.hover.clone()),
+            transform,
+            velocity,
+        ));
+    }
+}
+
+pub fn update_particles(
+    mut particles: Query<(&mut ParticleVelocity, &mut Transform)>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_secs();
+    for (mut velocity, mut transform) in particles.iter_mut() {
+        transform.translation += velocity.velocity.extend(0.0) * dt;
+
+        velocity.velocity += Vec2::Y * -600.0 * dt;
     }
 }
